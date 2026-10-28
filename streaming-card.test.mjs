@@ -117,3 +117,37 @@ test('an unspecified or unknown speed never renders as Fast', async () => {
     assert.doesNotMatch(arg(calls[1], '--content'), /Fast/);
   }
 });
+
+test('local screenshots render as compact descriptions while the result link stays usable', async () => {
+  const calls = [];
+  const card = new StreamingReplyCard(async args => {
+    calls.push(args);
+    return { ok: true, data: { bizId: 'card-id', accepted: true } };
+  }, { cwd: '/workspace' });
+  await card.create({ conversationId: 'trusted-group' });
+  await card.update('已创建：[PR #123](https://example.com/project/pull/123)。\n\n'
+    + '![PR 创建结果](/workspace/outputs/pr-created.png)',
+  { phase: 'finished', execution: { model: 'test-model', serviceTier: null } });
+  const content = arg(calls[1], '--content');
+  assert.match(content, /\[PR #123\]\(https:\/\/example\.com\/project\/pull\/123\)/);
+  assert.match(content, /PR 创建结果/);
+  assert.match(content, /outputs\/pr-created\.png/);
+  assert.match(content, /本机图片/);
+  assert.doesNotMatch(content, /!\[|\/workspace\//);
+  assert.match(content, /模型：test-model · 速度：默认/);
+  assert.equal(calls.length, 2, 'image fallback must not send or upload another message');
+  assert.equal(card.state, 'finished');
+});
+
+test('progress images use the same fallback and preserve literal Markdown examples', async () => {
+  const { card, calls } = fixture();
+  await card.create({ conversationId: 'trusted-group' });
+  await card.update('![执行截图](outputs/progress.png)');
+  await card.update('![执行截图](outputs/progress.png)');
+  const body = arg(calls.at(-1), '--content');
+  assert.doesNotMatch(body, /!\[执行截图\]/);
+  assert.equal(body.split('本机图片').length - 1, 1, 'repeated progress stays deduplicated');
+  const code = '示例：`![代码示例](local.png)`\n\n```md\n![围栏示例](local.png)\n```';
+  await card.update(code, { phase: 'finished' });
+  assert.ok(arg(calls.at(-1), '--content').startsWith(code));
+});

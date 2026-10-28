@@ -184,6 +184,32 @@ test('resumed history and early live notifications are correlated to the confirm
   assert.equal(result.serviceTier, 'priority');
 });
 
+test('public commentary reaches the host once while history and private items stay out of cards', async (t) => {
+  class ProgressCodex extends OfflineCodex {
+    async _request(method, params) {
+      if (method !== 'turn/start') return super._request(method, params);
+      const notify = (turnId, item) => this._handleNotification({ method: 'item/completed', params: {
+        threadId: params.threadId, ...(turnId ? { turnId } : {}), item,
+      } });
+      notify('old-turn', { id: 'old', type: 'agentMessage', phase: 'commentary', text: 'STALE_PROGRESS' });
+      notify(null, { id: 'unscoped', type: 'agentMessage', phase: 'commentary', text: 'UNSCOPED_PROGRESS' });
+      notify('live-turn', { id: 'private', type: 'reasoning', text: 'PRIVATE_REASONING' });
+      const item = { id: 'progress', type: 'agentMessage', phase: 'commentary', text: '已定位失败原因，正在验证修复。' };
+      notify('live-turn', item);
+      notify('live-turn', item);
+      return { turn: { id: 'live-turn', status: 'completed', items: [
+        { id: 'answer', type: 'agentMessage', phase: 'final_answer', text: '修复已完成。' },
+      ] } };
+    }
+  }
+  const client = new ProgressCodex();
+  t.after(() => client.close());
+  const progress = [];
+  const result = await client.run({ text: 'task', onProgress: text => progress.push(text) });
+  assert.equal(result.text, '修复已完成。');
+  assert.deepEqual(progress, ['正在思考…', '已定位失败原因，正在验证修复。']);
+});
+
 test('execution monitoring observes the confirmed live turn without reasoning or raw tool data', async (t) => {
   class ObservedCodex extends OfflineCodex {
     async _request(method, params) {

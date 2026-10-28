@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { spawn, execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFile, writeFile, rename, mkdir, open, unlink } from 'node:fs/promises';
 import { CodexClient, assertCodexReady } from './codex-client.mjs';
 import { prepareImageInput } from './media.mjs';
 import { StreamingReplyCard } from './streaming-card.mjs';
+import { cardMarkdown } from './card-markdown.mjs';
+import { prepareImageReply, deliverImageReply } from './outbound-images.mjs';
 import { ExecutionLogStore } from './execution-log.mjs';
 import { startMonitor } from './monitor.mjs';
 import { acceptEvent, eventKey, eventRejectionReason, EVENT_KEY } from './policy.mjs';
@@ -57,7 +60,7 @@ function log(message, detail = {}) {
 function dws(args, body) {
   return new Promise((resolve, reject) => {
     const child = spawn(config.dws, [...args, '--profile', config.profile, '--format', 'json'],
-      { env: dwsEnvironment(config), stdio: ['pipe', 'pipe', 'pipe'] });
+      { cwd: config.cwd, env: dwsEnvironment(config), stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     const timer = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('DWS 请求超时，结果未知；不自动重发。')); }, 45000);
     child.stdout.on('data', b => { stdout += b; });
@@ -147,7 +150,7 @@ async function run() {
     await persist();
     runtime.processing = accepted.key;
     await publish();
-    const replyCard = new StreamingReplyCard(dws);
+    const replyCard = new StreamingReplyCard(dws, { cwd: config.cwd });
     let bizId, progressChain = Promise.resolve(), lastProgress = 0;
     let taskLog, logWarning = false;
     const logUnavailable = () => {
@@ -211,9 +214,50 @@ async function run() {
       await persist();
       await progressChain;
       if (replyCard.deliveryUnknown) throw new Error('卡片更新回执不明，结果已保存在本机；没有重复发送。');
+      let finalAnswer = answer.text;
+      try {
+        const imagePlan = await prepareImageReply(answer.text, { cwd: config.cwd });
+        if (imagePlan.images.length > 0) {
+          const idempotencyKey = randomUUID();
+          record.outboundImages = { state: 'sending', idempotencyKey,
+            count: imagePlan.images.length, warnings: imagePlan.warnings };
+          await persist();
+          const delivery = await deliverImageReply(imagePlan, {
+            call: dws, target: cardTarget, idempotencyKey,
+            async onReceipt(receipt) {
+              record.outboundImages = { ...record.outboundImages, ...receipt, state: 'accepted' };
+              await persist();
+            },
+          });
+          record.outboundImages = { ...record.outboundImages, ...delivery };
+          await persist();
+          if (delivery.state === 'sent' && imagePlan.warnings.length === 0) {
+            finalAnswer = cardMarkdown(answer.text, { cwd: config.cwd,
+              localImageNote: '原图已另发，请查看图片消息' });
+          } else if (delivery.state === 'sent') {
+            finalAnswer += `\n\n> 已另发 ${imagePlan.images.length} 张原图；部分图片未能交付。`;
+          } else {
+            finalAnswer += delivery.state === 'failed'
+              ? '\n\n> 图片消息发送失败，文字结果已保留。'
+              : '\n\n> 图片消息投递尚未确认，请先查看本会话，避免重复发送。';
+          }
+        } else if (imagePlan.warnings.length > 0) {
+          record.outboundImages = { state: 'failed', warnings: imagePlan.warnings };
+          await persist();
+          finalAnswer += '\n\n> 图片未能交付，请检查本机图片文件。';
+        }
+      } catch {
+        const attempted = ['sending', 'accepted', 'delivery_unknown'].includes(record.outboundImages?.state);
+        record.outboundImages = { ...record.outboundImages,
+          state: attempted ? 'delivery_unknown' : 'failed', error: '图片交付未完成。' };
+        await persist();
+        finalAnswer += attempted
+          ? '\n\n> 图片消息投递尚未确认，请先查看本会话，避免重复发送。'
+          : '\n\n> 图片未能交付，请检查本机图片文件。';
+      }
       record.state = 'finishing_card';
       await persist();
-      await replyCard.update(answer.text, { phase: 'finished', execution: answer });
+      await replyCard.update(finalAnswer, { phase: 'finished', execution: answer });
       record.state = 'finished';
       record.finishedAt = new Date().toISOString();
       await persist();

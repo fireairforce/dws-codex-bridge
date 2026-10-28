@@ -1,4 +1,5 @@
 import { singleBizId } from './policy.mjs';
+import { cardMarkdown } from './card-markdown.mjs';
 
 function executionSummary({ model, serviceTier } = {}) {
   const modelLabel = typeof model === 'string' && model.trim() ? model.trim() : '未确认';
@@ -30,9 +31,10 @@ function assertReceipt(result, expectedBizId) {
 
 /** The host supplies its existing DWS caller after validating the source and target. */
 export class StreamingReplyCard {
-  constructor(call) {
+  constructor(call, { cwd } = {}) {
     if (typeof call !== 'function') throw new TypeError('A host DWS caller is required.');
     this.call = call;
+    this.cwd = cwd;
     this.bizId = null;
     this.state = 'new';
     this.progress = [];
@@ -68,10 +70,11 @@ export class StreamingReplyCard {
     if (typeof text !== 'string' || !text.trim()) throw new TypeError('卡片正文不能为空。');
     const status = { processing: 1, progress: 2, finished: 3, failed: 5 }[phase];
     if (!status) throw new TypeError('未知卡片状态。');
+    const displayText = cardMarkdown(text, { cwd: this.cwd });
     const terminal = phase === 'finished' || phase === 'failed';
-    const nextProgress = this.progress.at(-1) === text ? [...this.progress] : [...this.progress, text];
+    const nextProgress = this.progress.at(-1) === displayText ? [...this.progress] : [...this.progress, displayText];
     const body = terminal
-      ? `${phase === 'failed' ? '**任务未完成**\n\n' : ''}${text}\n\n---\n\n> ${executionSummary(execution)}`
+      ? `${phase === 'failed' ? '**任务未完成**\n\n' : ''}${displayText}\n\n---\n\n> ${executionSummary(execution)}`
       : `**正在处理**\n\n${nextProgress.join('\n\n')}\n\n---\n\n> 模型与速度：待执行确认`;
     this.state = 'updating';
     try {

@@ -5,6 +5,7 @@ import { validateImagePaths } from './media.mjs';
 
 const HOST_INSTRUCTIONS = [
   'The DingTalk host handles all message transport, progress cards, and final delivery. Return your answer to the host; do not send DingTalk messages or cards yourself.',
+  'To include a screenshot or generated image in a DingTalk reply, save it under outputs/ in the task workspace and reference it with Markdown image syntax. The host validates local image files and handles image delivery; do not send messages or upload files yourself. Keep relevant web links in the answer.',
   'Do not change, log out, copy, expose, or replace DingTalk or Codex authentication, account selection, credentials, or tokens.',
   'Work only on the user task in the supplied working directory. Do not request broader permissions or use another identity to bypass restrictions.',
 ].join('\n');
@@ -189,7 +190,7 @@ export class CodexClient {
         progressTail: Promise.resolve(), progressSeen: new Set(), resolve: finish, reject: fail, settled: false };
       this._active = context;
       context.timer = setTimeout(() => {
-        const error = bridgeError('CODEX_TURN_TIMEOUT', 'Codex did not complete within the configured time.', { threadId: currentThread, turnId: context.turnId });
+        const error = bridgeError('CODEX_TURN_TIMEOUT', '本轮处理超过宿主时限，已停止等待。可以继续追问当前进展；任务不会自动重跑。', { threadId: currentThread, turnId: context.turnId });
         this._cancelContext(context, error);
       }, this.turnTimeoutMs);
       this._progress(context, '正在思考…');
@@ -290,6 +291,10 @@ export class CodexClient {
     }
     if (message.method === 'item/completed' && params.item?.type === 'agentMessage') {
       context.messages.set(params.item.id, { text: params.item.text, phase: params.item.phase });
+      if (turnId === context.turnId && params.item.phase === 'commentary'
+        && typeof params.item.text === 'string' && params.item.text.trim()) {
+        this._progress(context, params.item.text);
+      }
     } else if (message.method === 'item/started' && ['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall'].includes(params.item?.type)) {
       this._progress(context, '正在执行任务…');
     } else if (message.method === 'turn/completed') {
