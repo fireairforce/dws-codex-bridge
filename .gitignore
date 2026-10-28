@@ -1,0 +1,18 @@
+# Local identities, credentials, and environment overrides.
+config.json
+config.*.json
+!config.example.json
+.env
+.env.*
+.dws*/
+
+# Runtime state, downloaded images, and execution history.
+.state/
+.execution-logs/
+downloads/
+*.log
+*.pid
+*.tmp
+
+node_modules/
+.DS_Store

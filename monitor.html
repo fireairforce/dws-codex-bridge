@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bridge · 执行日志</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101319;--panel:#171c24;--border:#2b3442;--muted:#94a2b5;--ink:#e4edf9;--accent:#7de0bb;--blue:#8abaff;--danger:#ff9b9b}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}button,input{font:inherit}button{cursor:pointer}header{height:76px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid var(--border);background:#141922}h1{font-size:19px;letter-spacing:.03em;margin:0 0 5px}.subtitle{font-size:12px;color:var(--muted)}.connection{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}.dot{height:7px;width:7px;background:var(--accent);border-radius:50%;box-shadow:0 0 9px #7de0bb40}.dot.offline{background:var(--danger)}main{display:grid;grid-template-columns:290px minmax(0,1fr);height:calc(100vh - 76px)}aside{display:flex;flex-direction:column;border-right:1px solid var(--border);min-height:0;background:var(--panel)}.aside-heading{padding:22px 20px 14px;display:flex;justify-content:space-between;color:var(--muted);font-size:12px}.count{font-family:monospace}#tasks{overflow-y:auto;padding:0 10px 20px}.task{display:block;width:100%;padding:14px 12px;border:1px solid transparent;border-radius:8px;background:transparent;text-align:left;color:var(--ink);margin:3px 0}.task:hover{background:#212936}.task.selected{border-color:#476079;background:#223040}.task-title{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:8px}.task-caption{font-size:11px;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:8px}.state{display:inline-flex;gap:6px;align-items:center}.state:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:currentColor}.running,.queued{color:var(--accent)}.failed{color:var(--danger)}.completed{color:var(--blue)}.workspace{min-width:0;display:flex;flex-direction:column;min-height:0}.task-heading{padding:22px 28px 18px;border-bottom:1px solid var(--border);min-height:99px}h2{font-size:16px;font-weight:550;margin:0 0 12px;overflow-wrap:anywhere}.metadata{display:flex;gap:15px;flex-wrap:wrap;color:var(--muted);font-size:12px}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 28px;border-bottom:1px solid var(--border)}.search{min-width:0;max-width:420px;flex:1;background:#171e29;border:1px solid var(--border);border-radius:6px;padding:8px 11px;color:var(--ink);outline:none}.search:focus{border-color:var(--blue)}.follow{color:var(--muted);font-size:12px;white-space:nowrap;display:flex;gap:7px;align-items:center}.follow input{accent-color:var(--accent)}#terminal{flex:1;min-height:0;overflow:auto;padding:18px 28px 40px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.75;tab-size:2}.entry{margin:0 0 16px}.entry-heading{display:flex;gap:12px;align-items:baseline;color:var(--muted);margin-bottom:4px}.entry-type{color:var(--blue)}.entry pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#d8e5f5;font:inherit}.entry[data-error="true"] .entry-type{color:var(--danger)}.empty{color:var(--muted);line-height:1.9;padding:32px 0}.empty strong{color:var(--ink);font-weight:500}.aside-empty{padding:8px 12px;font-size:12px;color:var(--muted);line-height:1.8}footer{padding:9px 28px;border-top:1px solid var(--border);font-size:11px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}.hidden{display:none!important}#notice{font-size:12px;color:var(--danger);padding:8px 28px;border-bottom:1px solid var(--border)}@media(max-width:780px){header{padding:0 16px}main{grid-template-columns:190px minmax(0,1fr)}.task-heading,.toolbar,#terminal{padding-left:16px;padding-right:16px}.connection{max-width:150px;text-align:right}.toolbar{flex-wrap:wrap}.search{min-width:130px}footer{padding:9px 16px}}@media(max-width:520px){main{grid-template-columns:1fr;height:auto;min-height:calc(100vh - 76px)}aside{border-right:0;border-bottom:1px solid var(--border);max-height:210px}#tasks{display:flex;overflow:auto;gap:6px;padding-bottom:10px}.task{min-width:200px}.aside-heading{padding:12px 16px 8px}.workspace{height:calc(100vh - 210px)}.subtitle{font-size:10px}.connection{font-size:10px}}
+  </style>
+  <style>.task-id{margin-top:9px;color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere;user-select:text}.command-duration{color:var(--muted);font-size:11px}</style>
+</head>
+<body>
+  <header>
+    <div><h1>Bridge <span style="color:#7de0bb">/</span> 执行日志</h1><div class="subtitle">本机只读 · 任务进度与命令输出</div></div>
+    <div class="connection"><span id="connection-dot" class="dot"></span><span id="connection-label">连接中</span></div>
+  </header>
+  <main>
+    <aside><div class="aside-heading"><span>最近任务</span><span id="task-count" class="count">0</span></div><div id="tasks"><div class="aside-empty">正在读取任务…</div></div></aside>
+    <section class="workspace">
+      <div class="task-heading"><h2 id="task-title">选择一个任务查看执行日志</h2><div class="metadata"><span id="task-status">—</span><span id="task-model">模型：未确认</span><span id="task-tier">速度：未确认</span><span id="task-duration">耗时：—</span></div><div id="task-id" class="task-id">任务 ID：—</div></div>
+      <div class="toolbar"><input id="search" class="search" type="search" placeholder="搜索命令、输出或进度" aria-label="搜索日志"><label class="follow"><input id="follow" type="checkbox" checked>自动跟随</label></div>
+      <div id="notice" class="hidden" role="status"></div>
+      <div id="terminal" aria-label="执行日志"><div class="empty"><strong>等待新任务</strong><br>在钉钉发起任务后，这里会显示执行过程。<br>命令开始时显示命令，结束后显示脱敏输出。</div></div>
+      <footer><span id="event-count">0 条事件</span><span>仅展示已记录的任务 · 日志已脱敏并限制长度</span></footer>
+    </section>
+  </main>
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const state = { tasks: [], selected: null, events: [], after: 0, generation: 0, busy: false, detailBusy: false, filtered: '' };
+    const statusLabels = { queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', interrupted: '已中断', cancelled: '已取消', incomplete: '未完成', delivery_unknown: '送达未确认' };
+    const typeLabels = { task_started: '任务开始', task_finished: '任务结束', progress: '进度', command: '命令', tool: '工具', fileChange: '文件变更', truncated: '记录上限' };
+    function element(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; }
+    function statusName(status) { return statusLabels[status] || '未确认'; }
+    function dateLabel(value, timeOnly = false) { const date = new Date(value); if (!Number.isFinite(date.getTime())) return '—'; return timeOnly ? date.toLocaleTimeString('zh-CN', {hour12:false}) : date.toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}); }
+    function durationLabel(task) { const start = new Date(task.createdAt).getTime(); const end = ['running','queued'].includes(task.status) ? Date.now() : new Date(task.updatedAt).getTime(); if (!Number.isFinite(start) || !Number.isFinite(end)) return '—'; const seconds = Math.max(0, Math.round((end-start)/1000)); return seconds < 60 ? seconds+' 秒' : Math.floor(seconds/60)+' 分 '+seconds%60+' 秒'; }
+    function taskTitle(task) { return task.title || '任务 '+task.id.slice(0,8); }
+    async function api(path) { const response = await fetch(path, {cache:'no-store',credentials:'omit'}); if (!response.ok) throw new Error('读取失败'); return response.json(); }
+    function connection(ok) { $('connection-dot').classList.toggle('offline', !ok); $('connection-label').textContent = ok ? '本机已连接 · 每秒刷新' : '连接断开 · 正在重试'; }
+    function showNotice(text) { $('notice').textContent = text; $('notice').classList.toggle('hidden', !text); }
+    function renderTasks() {
+      const fragment = document.createDocumentFragment();
+      for (const task of state.tasks) {
+        const button = element('button', 'task'+(task.id === state.selected ? ' selected' : '')); button.type = 'button'; button.setAttribute('aria-pressed', String(task.id === state.selected));
+        button.append(element('div', 'task-title', taskTitle(task)));
+        const caption = element('div', 'task-caption'); const status = element('span', 'state', statusName(task.status));
+        if (['running','queued','completed','failed'].includes(task.status)) status.classList.add(task.status);
+        caption.append(status, element('span', '', dateLabel(task.createdAt))); button.append(caption); button.addEventListener('click', () => selectTask(task.id)); fragment.append(button);
+      }
+      if (!state.tasks.length) fragment.append(element('div', 'aside-empty', '还没有任务日志。重载新版 bridge 后，新任务会出现在这里。'));
+      $('tasks').replaceChildren(fragment); $('task-count').textContent = String(state.tasks.length);
+    }
+    function renderMetadata(task) {
+      $('task-title').textContent = taskTitle(task); $('task-status').textContent = statusName(task.status);
+      $('task-model').textContent = '模型：'+(task.model || '未确认')+(task.effort ? ' · '+task.effort : '');
+      $('task-tier').textContent = '速度：'+(task.serviceTier === 'priority' ? 'Fast' : task.serviceTier === null ? '默认' : '未确认');
+      $('task-duration').textContent = '耗时：'+durationLabel(task);
+      $('task-id').textContent = '任务 ID：'+task.id;
+    }
+    function eventText(event) {
+      if (typeof event.text === 'string') return event.text;
+      const parts = [];
+      if (event.command) parts.push('$ '+event.command); if (event.cwd) parts.push('目录：'+event.cwd); if (event.output) parts.push(event.output);
+      if (event.tool) parts.push((event.server ? event.server+' / ' : '')+event.tool); if (Array.isArray(event.paths)) parts.push(event.paths.join('\n'));
+      if (event.status) parts.push('状态：'+event.status); if (event.exitCode !== undefined && event.exitCode !== null) parts.push('退出码：'+event.exitCode);
+      return parts.join('\n') || '已记录事件';
+    }
+    function renderEvents() {
+      const fragment = document.createDocumentFragment(); const search = state.filtered.toLocaleLowerCase(); let matched = 0;
+      for (const event of state.events) {
+        const text = eventText(event); const label = (typeLabels[event.type] || event.type || '事件')+(event.phase === 'completed' ? ' · 结束' : event.phase === 'started' ? ' · 开始' : '');
+        if (search && !(text+' '+label).toLocaleLowerCase().includes(search)) continue;
+        matched++;
+        const entry = element('article', 'entry'); if (event.status === 'failed') entry.dataset.error = 'true';
+        const heading = element('div', 'entry-heading'); heading.append(element('time', '', dateLabel(event.time,true)), element('span','entry-type',label));
+        if (event.type === 'command' && Number.isFinite(event.durationMs) && event.durationMs >= 0) heading.append(element('span', 'command-duration', event.durationMs < 1000 ? Math.round(event.durationMs)+' ms' : (event.durationMs/1000).toFixed(1)+' 秒'));
+        entry.append(heading, element('pre','',text)); fragment.append(entry);
+      }
+      if (!matched) fragment.append(element('div', 'empty', search ? '没有匹配的日志。' : '等待执行事件…'));
+      $('terminal').replaceChildren(fragment); $('event-count').textContent = state.events.length+' 条事件'+(search ? ' · 匹配 '+matched : '');
+      if ($('follow').checked) $('terminal').scrollTop = $('terminal').scrollHeight;
+    }
+    async function selectTask(id) {
+      state.selected = id; state.generation++; state.events = []; state.after = 0; state.detailBusy = false; showNotice(''); renderTasks();
+      const task = state.tasks.find((item) => item.id === id); if (task) renderMetadata(task); renderEvents(); await refreshDetail();
+    }
+    async function refreshDetail() {
+      if (!state.selected || state.detailBusy) return; state.detailBusy = true;
+      const id = state.selected; const generation = state.generation;
+      try {
+        let pages = 0;
+        do {
+          const result = await api('/api/tasks/'+encodeURIComponent(id)+'?after='+state.after+'&limit=200');
+          if (generation !== state.generation) return;
+          renderMetadata(result.task); const received = Array.isArray(result.events) ? result.events : [];
+          for (const event of received) if (Number.isSafeInteger(event.seq) && event.seq > state.after) { state.events.push(event); state.after = event.seq; }
+          if (state.events.length > 3000) { state.events.splice(0,state.events.length-3000); showNotice('页面保留最近 3000 条事件。'); }
+          renderEvents(); pages++; if (received.length < 200) break;
+        } while (pages < 5);
+        connection(true);
+      } catch { if (generation === state.generation) { showNotice('暂时无法读取该任务，稍后自动重试。'); connection(false); } }
+      finally { if (generation === state.generation) state.detailBusy = false; }
+    }
+    async function refresh() {
+      if (state.busy) return; state.busy = true;
+      try { const result = await api('/api/tasks'); state.tasks = Array.isArray(result.tasks) ? result.tasks : []; renderTasks(); connection(true); if (!state.selected && state.tasks.length) await selectTask(state.tasks[0].id); else await refreshDetail(); }
+      catch { connection(false); } finally { state.busy = false; }
+    }
+    $('search').addEventListener('input', () => { state.filtered = $('search').value; renderEvents(); });
+    $('follow').addEventListener('change', () => { if ($('follow').checked) $('terminal').scrollTop = $('terminal').scrollHeight; });
+    refresh(); setInterval(refresh, 1000);
+  </script>
+</body>
+</html>
