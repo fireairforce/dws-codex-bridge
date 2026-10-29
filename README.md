@@ -1,6 +1,6 @@
 # DWS Codex Bridge
 
-通过 DWS 把钉钉数字员工与本机 Codex App Server 接起来。在指定群中交办任务，本机 Codex 处理后，将进度和答案写回同一张流式卡片。
+通过 DWS 把钉钉数字员工与本机 Codex App Server 接起来。在指定群中交办任务，本机 Codex 处理后，将进度和答案写回同一张 A2UI 卡片。
 
 ```text
 钉钉群聊 → DWS CLI → Node.js 桥接程序 → Codex App Server
@@ -13,6 +13,7 @@
 - 校验数字员工身份、发送者开放 ID 和指定群聊，只有配置的本人能触发本机任务。
 - 按会话复用 Codex 线程，以消息 ID 去重，追问可以延续上下文。
 - 同一卡片显示处理中、公开进度、最终答案或失败原因。
+- 创建新卡片时显式开启转发；实际转发效果需在目标客户端验证。
 - 支持消息中的图片引用，由 DWS 下载后作为本机图片交给 Codex。
 - 最终答案中的本机截图可由宿主上传为普通图文消息，卡片显示交付结果，避免无效图片占位。
 - 提供本机只读日志页和终端查看器。
@@ -22,7 +23,7 @@
 ## 准备
 
 1. Node.js 22 或更新版本，macOS 或 Linux。后台进程管理使用 POSIX 进程接口，Windows 暂未验证。
-2. 已安装并登录的 [DWS CLI](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli)，具备数字员工身份、群消息监听、图片下载和流式卡片能力。开发时使用 DWS v1.0.65，其他版本请先核对对应命令。访问企业数据需要相应的企业管理员授权。
+2. 已安装并登录的 [DWS CLI](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli)，具备数字员工身份、群消息监听、图片下载和 A2UI 卡片创建与更新能力。开发时使用 DWS v1.0.65，其他版本请先核对对应命令。访问企业数据需要相应的企业管理员授权。
 3. 已安装、已登录且支持 `app-server --stdio` 的 Codex CLI。
 4. 一个用于交办任务的群，以及已发布数字员工对应的可用 DWS profile。profile 的创建方式见 DWS 的[数字员工接入说明](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/skills/multi/dingtalk-tag/references/manage-and-connect.md)。
 
@@ -89,6 +90,16 @@ DWS_CODEX_CONFIG=/absolute/path/bridge.json node bridge.mjs stop
 
 授权用户的后续追问继续使用同一会话。消息正文中的 `[图片消息](mediaId=...)` 会由宿主下载；单条最多 4 张，单张不超过 10 MiB、总计不超过 20 MiB，支持 PNG、JPEG、GIF 和 WebP。
 
+### 回复卡片
+
+新回复使用 `chat message send-a2ui-card` 创建，并通过 `update-a2ui-card` 更新同一实例。卡片只含一个 Markdown 根组件，创建时包含完整 Surface、初始数据和非空正文，后续更新保留组件及 Surface ID，并同步 `fallbackMarkdown`。公开进度累计展示，完成后替换为完整答案，模型和速度作为正文的一部分显示。
+
+创建请求显式传入 `--support-forward`，群聊与单聊沿用已校验的原目标和身份。该设置只对新建卡片生效，当前更新接口不能给旧卡片补开转发。服务端接受 `supportForward=true` 与客户端实际完成转发是两项独立验证。
+
+已知失败会在正文标明“任务未完成”，再以 `FINISH` 结束输出；该状态表示流式输出结束，不代表任务成功。更新结果不明时停止后续写入，不自动重新创建。已有卡片不跨接口迁移，也不重放历史任务。
+
+客户端显示、转发和交互仍需独立验收。聊天内底部升级提示的来源尚未确定，不能据此认定客户端版本低；Schema 校验通过或服务端回执成功也不代表提示已消失。
+
 ### 截图与图片交付
 
 将生成的图片保存在配置工作目录的 `outputs/` 下，并在最终答案中以 `![图片说明](outputs/result.png)` 引用。宿主会使用现有 DWS profile，将已验证的图片另发为普通图文消息，目标仍是原来校验过的会话或主管。原生图文的显示和转发效果需在自己的客户端验证；本地测试不会实际上传或发消息。
@@ -138,6 +149,14 @@ npm test
 
 测试覆盖消息来源校验与去重、会话和轮次关联、模型与速度校验、图片边界、卡片生命周期、日志脱敏及只读查看器。测试使用本机临时文件和协议替身，不调用真实模型或发送钉钉消息。
 
+可选的 DWS 请求映射回归：
+
+```sh
+DWS_A2UI_DRY_RUN_BIN=/path/to/dws node --test simple-a2ui-card.test.mjs
+```
+
+这项检查固定使用 `--dry-run`，核对新卡片的转发参数和合成群目标，不发送消息；未设置该环境变量时跳过。它不能替代客户端显示和转发验收。
+
 个人配置、身份信息、状态、执行日志、下载文件和 `outputs/` 产物均已加入忽略规则。发布前检查实际暂存文件；忽略规则不会移除已经跟踪的文件。
 
 | 文件 | 职责 |
@@ -145,7 +164,7 @@ npm test
 | `bridge.mjs` / `config.mjs` | 宿主、配置和进程管理 |
 | `policy.mjs` | 来源校验、消息去重键和会话键 |
 | `codex-client.mjs` | Codex App Server stdio 协议、线程和轮次 |
-| `streaming-card.mjs` | 流式卡片的创建、更新和终结 |
+| `simple-a2ui-card.mjs` | 单 Markdown 组件 A2UI 卡片的创建、更新和终结 |
 | `media.mjs` | 图片下载结果和输入校验 |
 | `card-markdown.mjs` | 卡片图片引用解析与本机资源降级显示 |
 | `outbound-images.mjs` | 出站图片校验、暂存、发送及回执确认 |

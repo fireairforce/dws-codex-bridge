@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { readFile, writeFile, rename, mkdir, open, unlink } from 'node:fs/promises';
 import { CodexClient, assertCodexReady } from './codex-client.mjs';
 import { prepareImageInput } from './media.mjs';
-import { StreamingReplyCard } from './streaming-card.mjs';
+import { SimpleA2UIReplyCard, SIMPLE_A2UI_CARD_TYPE } from './simple-a2ui-card.mjs';
 import { cardMarkdown } from './card-markdown.mjs';
 import { prepareImageReply, deliverImageReply } from './outbound-images.mjs';
 import { ExecutionLogStore } from './execution-log.mjs';
@@ -119,6 +119,7 @@ async function run() {
   const executionLogs = new ExecutionLogStore();
   let queue = Promise.resolve();
   const runtime = { pid: process.pid, startedAt: new Date().toISOString(), state: 'starting',
+    cardType: SIMPLE_A2UI_CARD_TYPE,
     profile: config.profile, model: config.model, effort: config.effort, serviceTier: config.serviceTier, cwd: config.cwd,
     eventKey: eventKey(config), groupConversationId: config.groupConversationId || null,
     groupName: config.groupName || null };
@@ -150,7 +151,7 @@ async function run() {
     await persist();
     runtime.processing = accepted.key;
     await publish();
-    const replyCard = new StreamingReplyCard(dws, { cwd: config.cwd });
+    const replyCard = new SimpleA2UIReplyCard(dws, { cwd: config.cwd });
     let bizId, progressChain = Promise.resolve(), lastProgress = 0;
     let taskLog, logWarning = false;
     const logUnavailable = () => {
@@ -175,7 +176,7 @@ async function run() {
         assertCodexReady(await client.initialize());
       }
       record.state = 'creating_card';
-      record.cardType = 'streaming-text-v1';
+      record.cardType = SIMPLE_A2UI_CARD_TYPE;
       record.deliveryVerified = false;
       await persist();
       const cardTarget = config.groupConversationId
