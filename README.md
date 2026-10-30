@@ -90,6 +90,8 @@ DWS_CODEX_CONFIG=/absolute/path/bridge.json node bridge.mjs stop
 
 授权用户的后续追问继续使用同一会话。消息正文中的 `[图片消息](mediaId=...)` 会由宿主下载；单条最多 4 张，单张不超过 10 MiB、总计不超过 20 MiB，支持 PNG、JPEG、GIF 和 WebP。
 
+保存的线程被其他应用占用写入端时，宿主只对明确的 writer 冲突创建独立线程，保留存储历史，不中断另一端。新线程通过目录、沙箱、模型与档位校验后，先持久化会话绑定，再开始当前任务；失败时不自动创建空白会话或重跑旧任务。
+
 ### 回复卡片
 
 新回复使用 `chat message send-a2ui-card` 创建，并通过 `update-a2ui-card` 更新同一实例。卡片只含一个 Markdown 根组件，创建时包含完整 Surface、初始数据和非空正文，后续更新保留组件及 Surface ID，并同步 `fallbackMarkdown`。公开进度累计展示，完成后替换为完整答案，模型和速度作为正文的一部分显示。
@@ -122,6 +124,8 @@ node bridge.mjs start
 桥接启动后尝试提供只读页面：<http://127.0.0.1:8777>。页面显示任务、公开进度、命令输出和文件变更；日志页不可用不影响消息处理。
 
 日志位于源码旁的 `.execution-logs/`，已加入 `.gitignore`。状态与日志会保留在本机，需由使用者按需要清理。日志脱敏用于减少意外暴露，不应把执行记录当作可直接分享的源码附件。
+
+`status.running` 区分已运行、已退出和无法核验。进程检查被拒绝或工具不可用时返回 `null`，并在 `processCheck` 中说明原因；生命周期命令会停止，不删除锁或启动另一个实例。保存的 `ready` 状态本身不代表进程仍在运行。
 
 ```sh
 node terminal.mjs             # 持续查看最新任务
@@ -159,9 +163,12 @@ DWS_A2UI_DRY_RUN_BIN=/path/to/dws node --test simple-a2ui-card.test.mjs
 
 个人配置、身份信息、状态、执行日志、下载文件和 `outputs/` 产物均已加入忽略规则。发布前检查实际暂存文件；忽略规则不会移除已经跟踪的文件。
 
+本地历史副本或排查资料可放在 `.local-artifacts/`，该目录同样不会提交；真实配置和认证材料不应放进源码或测试夹具。
+
 | 文件 | 职责 |
 | --- | --- |
 | `bridge.mjs` / `config.mjs` | 宿主、配置和进程管理 |
+| `process-status.mjs` | 宿主进程归属检查与无法核验时的生命周期防护 |
 | `policy.mjs` | 来源校验、消息去重键和会话键 |
 | `codex-client.mjs` | Codex App Server stdio 协议、线程和轮次 |
 | `simple-a2ui-card.mjs` | 单 Markdown 组件 A2UI 卡片的创建、更新和终结 |

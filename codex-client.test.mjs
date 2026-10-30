@@ -158,6 +158,119 @@ test('a mismatched applied tier prevents a model turn for new and saved threads'
   }
 });
 
+test('an exclusively owned saved thread forks its history before starting new work', async (t) => {
+  const ready = [];
+  class OwnedThreadCodex extends OfflineCodex {
+    async _request(method, params) {
+      if (method === 'thread/resume') {
+        this.calls.push({ method, params: structuredClone(params) });
+        throw Object.assign(new Error('thread/resume: thread saved-thread already has an active writer'), {
+          code: 'CODEX_RPC_ERROR', rpcCode: -32600,
+        });
+      }
+      if (method === 'thread/fork') {
+        this.calls.push({ method, params: structuredClone(params) });
+        return { thread: { id: 'bridge-fork', forkedFromId: params.threadId, status: { type: 'idle' } },
+          model: this.model, serviceTier: this.appliedTier, cwd: this.cwd,
+          approvalPolicy: 'never', sandbox: { type: 'workspaceWrite' } };
+      }
+      if (method === 'turn/start') assert.equal(ready.at(-1)?.threadId, 'bridge-fork', 'persist the new binding before model work');
+      return super._request(method, params);
+    }
+  }
+  const client = new OwnedThreadCodex();
+  t.after(() => client.close());
+  const progress = [];
+  const first = await client.run({ threadId: 'saved-thread', text: 'new task',
+    onThreadReady: info => ready.push(info), onProgress: text => progress.push(text) });
+  const next = await client.run({ threadId: first.threadId, text: 'follow-up' });
+  assert.equal(first.threadId, 'bridge-fork');
+  assert.equal(next.threadId, 'bridge-fork');
+  assert.deepEqual(ready, [{ threadId: 'bridge-fork', forkedFromThreadId: 'saved-thread' }]);
+  assert.match(progress.join('\n'), /独立会话/);
+  const fork = client.calls.find(call => call.method === 'thread/fork').params;
+  assert.equal(fork.threadId, 'saved-thread');
+  assert.equal(fork.excludeTurns, true);
+  assert.equal(fork.model, client.model);
+  assert.equal(fork.serviceTier, 'priority');
+  assert.equal(fork.approvalPolicy, 'never');
+  assert.equal(fork.sandbox, 'workspace-write');
+  assert.equal(fork.cwd, client.cwd);
+  assert.ok(fork.developerInstructions.includes('DingTalk host'));
+  assert.equal(client.calls.filter(call => call.method === 'thread/resume').length, 1);
+  assert.equal(client.calls.filter(call => call.method === 'thread/fork').length, 1);
+  assert.ok(client.calls.filter(call => call.method === 'turn/start').every(call => call.params.threadId === 'bridge-fork'));
+  assert.ok(client.calls.every(call => call.method !== 'thread/start' && call.method !== 'turn/interrupt'));
+});
+
+test('unrelated resume failures never fork a thread or repeat a task', async (t) => {
+  class BrokenResumeCodex extends OfflineCodex {
+    async _request(method, params) {
+      if (method === 'thread/resume') {
+        this.calls.push({ method, params });
+        throw Object.assign(new Error('thread/resume: unavailable'), { code: 'CODEX_RPC_ERROR', rpcCode: -32600 });
+      }
+      return super._request(method, params);
+    }
+  }
+  const client = new BrokenResumeCodex();
+  t.after(() => client.close());
+  await assert.rejects(client.run({ threadId: 'saved-thread', text: 'task' }), /unavailable/);
+  assert.ok(client.calls.every(call => !['thread/fork', 'thread/start', 'turn/start'].includes(call.method)));
+});
+
+test('a failed new thread binding prevents any model work', async (t) => {
+  const client = new OfflineCodex();
+  t.after(() => client.close());
+  await assert.rejects(client.run({ text: 'task', onThreadReady: () => { throw new Error('state persistence failed'); } }), /state persistence failed/);
+  assert.ok(client.calls.every(call => call.method !== 'turn/start'));
+});
+
+for (const [name, override, code] of [
+  ['the original ID', { thread: { id: 'saved-thread' } }, 'CODEX_FORK_MISMATCH'],
+  ['a non-string ID', { thread: { id: 1 } }, 'CODEX_FORK_MISMATCH'],
+  ['an unexpected parent', { thread: { id: 'fork', forkedFromId: 'other-thread' } }, 'CODEX_FORK_MISMATCH'],
+  ['the wrong directory', { cwd: '/other-workspace' }, 'CODEX_SCOPE_MISMATCH'],
+  ['the wrong speed', { serviceTier: 'default' }, 'CODEX_TIER_MISMATCH'],
+]) {
+  test(`a fork returning ${name} cannot bind or start work`, async (t) => {
+    class InvalidForkCodex extends OfflineCodex {
+      async _request(method, params) {
+        if (method === 'thread/resume') throw Object.assign(new Error('thread/resume: thread saved-thread already has an active writer'), {
+          code: 'CODEX_RPC_ERROR', rpcCode: -32600,
+        });
+        if (method === 'thread/fork') return { thread: { id: 'fork', forkedFromId: 'saved-thread', status: { type: 'idle' } },
+          model: this.model, cwd: this.cwd, serviceTier: this.serviceTier,
+          approvalPolicy: 'never', sandbox: { type: 'workspaceWrite' }, ...override };
+        return super._request(method, params);
+      }
+    }
+    const client = new InvalidForkCodex();
+    t.after(() => client.close());
+    let bindingCalls = 0;
+    await assert.rejects(client.run({ threadId: 'saved-thread', text: 'new task', onThreadReady: () => { bindingCalls++; } }),
+      { code, threadId: 'saved-thread' });
+    assert.equal(bindingCalls, 0);
+    assert.ok(client.calls.every(call => call.method !== 'turn/start'));
+  });
+}
+
+test('a failed fork does not start a blank thread or repeat existing work', async (t) => {
+  class FailedForkCodex extends OfflineCodex {
+    async _request(method, params) {
+      if (method === 'thread/resume') throw Object.assign(new Error('thread/resume: thread saved-thread already has an active writer'), {
+        code: 'CODEX_RPC_ERROR', rpcCode: -32600,
+      });
+      if (method === 'thread/fork') throw new Error('fork unavailable');
+      return super._request(method, params);
+    }
+  }
+  const client = new FailedForkCodex();
+  t.after(() => client.close());
+  await assert.rejects(client.run({ threadId: 'saved-thread', text: 'new task' }), /fork unavailable/);
+  assert.ok(client.calls.every(call => call.method !== 'turn/start' && call.method !== 'thread/start'));
+});
+
 test('resumed history and early live notifications are correlated to the confirmed new turn', async (t) => {
   class EarlyNotificationCodex extends OfflineCodex {
     async _request(method, params) {

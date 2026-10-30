@@ -153,25 +153,43 @@ export class CodexClient {
     return operation;
   }
 
-  async _run({ threadId, text, imagePaths = [], onProgress, onExecutionEvent } = {}) {
+  async _run({ threadId, text, imagePaths = [], onProgress, onExecutionEvent, onThreadReady } = {}) {
     if (typeof text !== 'string' || !text.trim()) throw new TypeError('Codex text must be nonempty.');
     if (threadId !== undefined && (typeof threadId !== 'string' || !threadId)) throw new TypeError('Invalid threadId.');
     if (onProgress !== undefined && typeof onProgress !== 'function') throw new TypeError('onProgress must be a function.');
     if (onExecutionEvent !== undefined && typeof onExecutionEvent !== 'function') throw new TypeError('onExecutionEvent must be a function.');
+    if (onThreadReady !== undefined && typeof onThreadReady !== 'function') throw new TypeError('onThreadReady must be a function.');
     let currentThread = threadId;
+    let forkedFromThreadId;
     try {
       const images = await validateImagePaths(imagePaths, this.cwd);
       await this._ensureInitialized();
       const checked = this._checkSummary || await this.check();
       assertCodexReady(checked);
       if (!currentThread || !this._loadedThreads.has(currentThread)) {
-        const result = await this._request(currentThread ? 'thread/resume' : 'thread/start', {
+        const params = {
           ...(currentThread ? { threadId: currentThread, excludeTurns: true } : {}),
           model: this.model, serviceTier: this.serviceTier, cwd: this.cwd, approvalPolicy: 'never', sandbox: 'workspace-write',
           developerInstructions: this.developerInstructions,
-        });
-        currentThread = result.thread?.id;
-        if (!currentThread) throw bridgeError('CODEX_THREAD_MISSING', 'Codex did not return a thread ID.');
+        };
+        let result;
+        try {
+          result = await this._request(currentThread ? 'thread/resume' : 'thread/start', params);
+        } catch (error) {
+          // Another app may hold the saved transcript's writer even while idle.
+          // Fork stored history for this new task; never interrupt or steal its writer.
+          const writerConflict = currentThread && error.code === 'CODEX_RPC_ERROR' && error.rpcCode === -32600
+            && error.message.includes(`thread ${currentThread} already has an active writer`);
+          if (!writerConflict) throw error;
+          forkedFromThreadId = currentThread;
+          result = await this._request('thread/fork', params);
+          if (typeof result.thread?.id !== 'string' || !result.thread.id.trim() || result.thread.id === forkedFromThreadId
+            || (result.thread.forkedFromId && result.thread.forkedFromId !== forkedFromThreadId)) {
+            throw bridgeError('CODEX_FORK_MISMATCH', '未能确认机器人的独立会话，已停止本轮执行。');
+          }
+        }
+        const preparedThreadId = result.thread?.id;
+        if (typeof preparedThreadId !== 'string' || !preparedThreadId.trim()) throw bridgeError('CODEX_THREAD_MISSING', 'Codex did not return a thread ID.');
         if (result.model !== this.model || result.approvalPolicy !== 'never' || result.sandbox?.type !== 'workspaceWrite' || resolve(result.cwd || '') !== this.cwd) {
           throw bridgeError('CODEX_SCOPE_MISMATCH', 'Codex did not apply the requested model, directory, or sandbox.');
         }
@@ -179,6 +197,10 @@ export class CodexClient {
           throw bridgeError('CODEX_TIER_MISMATCH', 'Codex did not apply the requested Fast tier.');
         }
         if (result.thread.status?.type === 'active') throw bridgeError('CODEX_THREAD_BUSY', 'The saved Codex thread already has running work.');
+        currentThread = preparedThreadId;
+        // Persist a new/forked binding before model work can have side effects.
+        await onThreadReady?.({ threadId: currentThread,
+          ...(forkedFromThreadId ? { forkedFromThreadId } : {}) });
         this._loadedThreads.add(currentThread);
       }
       let finish;
@@ -194,6 +216,7 @@ export class CodexClient {
         this._cancelContext(context, error);
       }, this.turnTimeoutMs);
       this._progress(context, '正在思考…');
+      if (forkedFromThreadId) this._progress(context, '已保留上下文并为机器人建立独立会话，继续处理。');
       try {
         const started = await this._request('turn/start', {
           threadId: currentThread, input: [{ type: 'text', text }, ...images.map(path => ({ type: 'localImage', path }))],

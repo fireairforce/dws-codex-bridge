@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import { ExecutionLogStore } from './execution-log.mjs';
 import { startMonitor } from './monitor.mjs';
 import { acceptEvent, eventKey, eventRejectionReason, EVENT_KEY } from './policy.mjs';
 import { loadConfig, dwsEnvironment, backgroundEnvironment } from './config.mjs';
+import { inspectBridgeProcess, requireKnownProcessStatus } from './process-status.mjs';
 
 const entry = fileURLToPath(import.meta.url);
 const sourceDir = dirname(entry);
@@ -46,12 +47,11 @@ async function save(path, value) {
   saveQueues.set(path, next);
   return next;
 }
+function inspectOwnProcess(pid) {
+  return inspectBridgeProcess(pid, { entry });
+}
 function isOwnProcess(pid) {
-  if (!Number.isInteger(pid) || pid < 2) return false;
-  try {
-    const command = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' });
-    return command.includes(entry) && /\srun(?:\s|$)/.test(command);
-  } catch { return false; }
+  return requireKnownProcessStatus(inspectOwnProcess(pid));
 }
 function log(message, detail = {}) {
   console.log(JSON.stringify({ time: new Date().toISOString(), message, ...detail }));
@@ -119,7 +119,7 @@ async function run() {
   const executionLogs = new ExecutionLogStore();
   let queue = Promise.resolve();
   const runtime = { pid: process.pid, startedAt: new Date().toISOString(), state: 'starting',
-    cardType: SIMPLE_A2UI_CARD_TYPE,
+    cardType: SIMPLE_A2UI_CARD_TYPE, sessionRecovery: 'fork-on-writer-conflict',
     profile: config.profile, model: config.model, effort: config.effort, serviceTier: config.serviceTier, cwd: config.cwd,
     eventKey: eventKey(config), groupConversationId: config.groupConversationId || null,
     groupName: config.groupName || null };
@@ -194,6 +194,12 @@ async function run() {
         await persist();
       }
       const answer = await client.run({ threadId: state.sessions[accepted.session], ...input,
+        async onThreadReady({ threadId, forkedFromThreadId }) {
+          state.sessions[accepted.session] = threadId;
+          record.threadId = threadId;
+          if (forkedFromThreadId) record.forkedFromThreadId = forkedFromThreadId;
+          await persist();
+        },
         onExecutionEvent: observeExecution,
         onProgress(text) {
           void observeExecution({ type: 'progress', text });
@@ -385,7 +391,9 @@ try {
   else if (command === 'run') await run();
   else if (command === 'status') {
     const runtime = await load(runtimePath, { state: 'not_started' });
-    console.log(JSON.stringify({ ...runtime, running: isOwnProcess(runtime.pid) }, null, 2));
+    const inspection = inspectOwnProcess(runtime.pid);
+    console.log(JSON.stringify({ ...runtime, running: inspection.running,
+      processCheck: { reason: inspection.reason, message: inspection.message } }, null, 2));
   } else if (command === 'start') {
     const runtime = await load(runtimePath, {});
     if (isOwnProcess(runtime.pid)) throw new Error('数字员工连接已在运行。');

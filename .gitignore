@@ -5,12 +5,27 @@ config.*.json
 .env
 .env.*
 .dws*/
+.codex/
+.aws/
+.npmrc
+.netrc
+auth.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Runtime state, downloaded images, and execution history.
 .state/
 .execution-logs/
 downloads/
 outputs/
+/.local-artifacts/
+/private/
+runtime.json
+state.json
+run.lock
 *.log
 *.pid
 *.tmp
