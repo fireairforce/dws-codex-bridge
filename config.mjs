@@ -28,6 +28,10 @@ export function validateConfig(input, configPath) {
     ? join(dirname(resolve(configPath)), '.state') : absolutePath(input.stateDir, 'stateDir');
   config.serviceTier = input.serviceTier ?? null;
   if (config.serviceTier !== null && config.serviceTier !== 'priority') throw new TypeError('serviceTier 只能为 null 或 priority。');
+  if (input.networkAccess !== undefined && typeof input.networkAccess !== 'boolean') {
+    throw new TypeError('networkAccess 必须为布尔值 true 或 false。');
+  }
+  config.networkAccess = input.networkAccess ?? false;
   for (const field of ['supervisorUserId', 'groupName']) {
     if (input[field] !== undefined) config[field] = requiredText(input[field], field);
   }

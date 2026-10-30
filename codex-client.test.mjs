@@ -8,8 +8,8 @@ import { CodexClient } from './codex-client.mjs';
 // Replace only the RPC boundary: these tests cannot launch Codex or use a network.
 class OfflineCodex extends CodexClient {
   constructor({ advertisedTiers = ['priority'], appliedTier = 'priority', cwd = '/offline/codex-test',
-    model = 'gpt-6.1-sol', effort = 'ultra', advertisedModel = model, advertisedEffort = effort } = {}) {
-    super({ cwd, codex: '/offline/codex', model, effort, serviceTier: 'priority' });
+    model = 'gpt-6.1-sol', effort = 'ultra', advertisedModel = model, advertisedEffort = effort, networkAccess } = {}) {
+    super({ cwd, codex: '/offline/codex', model, effort, serviceTier: 'priority', networkAccess });
     this.calls = [];
     this.advertisedTiers = advertisedTiers;
     this.appliedTier = appliedTier;
@@ -43,6 +43,31 @@ class OfflineCodex extends CodexClient {
     }
   }
 }
+
+for (const networkAccess of [undefined, false, true]) {
+  for (const threadId of [undefined, 'saved-thread']) {
+    test(`${threadId ? 'resumed' : 'new'} turns apply configured networkAccess=${String(networkAccess)} without changing other scope`, async t => {
+      const client = new OfflineCodex({ networkAccess });
+      t.after(() => client.close());
+      const first = await client.run({ threadId, text: 'first task' });
+      await client.run({ threadId: first.threadId, text: 'follow-up' });
+      const turns = client.calls.filter(call => call.method === 'turn/start');
+      assert.equal(turns.length, 2);
+      for (const { params } of turns) {
+        assert.deepEqual(params.sandboxPolicy, { type: 'workspaceWrite', writableRoots: [client.cwd], networkAccess: networkAccess ?? false });
+        assert.equal(params.approvalPolicy, 'never');
+        assert.equal(params.cwd, client.cwd);
+      }
+      assert.equal((await client.check()).networkAccess, networkAccess ?? false);
+    });
+  }
+}
+
+test('invalid client network settings fail before any model process can start', () => {
+  for (const networkAccess of ['true', 'false', 1, 0, null, {}, []]) {
+    assert.throws(() => new OfflineCodex({ networkAccess }), /networkAccess/);
+  }
+});
 
 test('a configured model and effort from the account catalog reach the turn without changing sandbox policy', async (t) => {
   const client = new OfflineCodex({ model: 'another-supported-model', effort: 'high' });

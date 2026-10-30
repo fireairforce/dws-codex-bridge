@@ -9,5 +9,6 @@
   "groupConversationId": "<allowed-group-conversation-id>",
   "model": "<model-from-your-codex-catalog>",
   "effort": "<supported-reasoning-effort>",
-  "serviceTier": null
+  "serviceTier": null,
+  "networkAccess": false
 }

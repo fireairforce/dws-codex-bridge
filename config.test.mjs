@@ -22,10 +22,11 @@ test('missing identity or group settings cannot enable a listener', () => {
   }
 });
 
-test('configuration normalizes state location and ignores attempts to change execution policy', () => {
+test('configuration normalizes state location and ignores unsupported sandbox or approval overrides', () => {
   const result = validateConfig({ ...configured, sandbox: 'danger-full-access', approvalPolicy: 'on-request' }, '/config/config.json');
   assert.equal(result.stateDir, '/config/.state');
   assert.equal(result.serviceTier, null);
+  assert.equal(result.networkAccess, false);
   assert.equal(result.model, 'available-model');
   assert.equal(result.effort, 'high');
   assert.equal(Object.hasOwn(result, 'sandbox'), false);
@@ -37,14 +38,25 @@ test('configuration normalizes state location and ignores attempts to change exe
   assert.throws(() => validateConfig({ ...configured, turnTimeoutMs: 0 }, '/config/config.json'), /turnTimeoutMs/);
 });
 
+test('network access accepts only explicit booleans and defaults to disabled', () => {
+  for (const value of [undefined, false, true]) {
+    const result = validateConfig({ ...configured, networkAccess: value }, '/config/config.json');
+    assert.equal(result.networkAccess, value === true);
+  }
+  for (const value of [null, 'true', 'false', 1, 0, {}, []]) {
+    assert.throws(() => validateConfig({ ...configured, networkAccess: value }, '/config/config.json'), /networkAccess/);
+  }
+});
+
 test('external configuration wins over default and background startup preserves that exact file', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'dws-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const path = join(root, 'custom.json');
-  await writeFile(path, JSON.stringify(configured));
+  await writeFile(path, JSON.stringify({ ...configured, networkAccess: true }));
   const loaded = await loadConfig({ defaultPath: join(root, 'not-used.json'), env: { DWS_CODEX_CONFIG: path } });
   assert.equal(loaded.configPath, path);
   assert.equal(loaded.config.stateDir, join(root, '.state'));
+  assert.equal(loaded.config.networkAccess, true);
   const childEnv = backgroundEnvironment(loaded.configPath, { PATH: '/offline/bin', DWS_CODEX_CONFIG: 'old.json' });
   assert.deepEqual(childEnv, { PATH: '/offline/bin', DWS_CODEX_CONFIG: path });
   const childLoaded = await loadConfig({ defaultPath: join(root, 'also-not-used.json'), env: childEnv });

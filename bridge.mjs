@@ -119,7 +119,7 @@ async function run() {
   const executionLogs = new ExecutionLogStore();
   let queue = Promise.resolve();
   const runtime = { pid: process.pid, startedAt: new Date().toISOString(), state: 'starting',
-    cardType: SIMPLE_A2UI_CARD_TYPE, sessionRecovery: 'fork-on-writer-conflict',
+    cardType: SIMPLE_A2UI_CARD_TYPE, sessionRecovery: 'fork-on-writer-conflict', networkAccess: config.networkAccess,
     profile: config.profile, model: config.model, effort: config.effort, serviceTier: config.serviceTier, cwd: config.cwd,
     eventKey: eventKey(config), groupConversationId: config.groupConversationId || null,
     groupName: config.groupName || null };

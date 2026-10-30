@@ -40,7 +40,7 @@ async function waitForOptionalLog(promise) {
 
 /** A private stdio client. It never starts an HTTP/WebSocket listener or handles DWS. */
 export class CodexClient {
-  constructor({ codex, model, effort, serviceTier = null, cwd,
+  constructor({ codex, model, effort, serviceTier = null, cwd, networkAccess = false,
     turnTimeoutMs = 1_200_000, requestTimeoutMs = 60_000, developerInstructions = '',
     dwsConfigDir, dwsKeychainDir } = {}) {
     if (!cwd || !isAbsolute(cwd)) throw new TypeError('Codex cwd must be an absolute path.');
@@ -48,6 +48,7 @@ export class CodexClient {
     if (typeof model !== 'string' || !model.trim()) throw new TypeError('A Codex model is required.');
     if (typeof effort !== 'string' || !effort.trim()) throw new TypeError('A Codex reasoning effort is required.');
     if (serviceTier !== null && serviceTier !== 'priority') throw new TypeError('Unsupported Codex service tier.');
+    if (typeof networkAccess !== 'boolean') throw new TypeError('networkAccess must be a boolean.');
     if (!Number.isSafeInteger(turnTimeoutMs) || turnTimeoutMs <= 0) throw new TypeError('Invalid turnTimeoutMs.');
     if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0) throw new TypeError('Invalid requestTimeoutMs.');
     if (dwsConfigDir !== undefined && !isAbsolute(dwsConfigDir)) throw new TypeError('DWS config directory must be absolute.');
@@ -57,6 +58,7 @@ export class CodexClient {
     this.model = model;
     this.effort = effort;
     this.serviceTier = serviceTier;
+    this.networkAccess = networkAccess;
     this.turnTimeoutMs = turnTimeoutMs;
     this.requestTimeoutMs = requestTimeoutMs;
     this.developerInstructions = [HOST_INSTRUCTIONS, developerInstructions].filter(Boolean).join('\n\n');
@@ -141,7 +143,7 @@ export class CodexClient {
       serviceTier: this.serviceTier,
       serviceTierSupported: this.serviceTier === null || supportedServiceTiers.some(({ id }) => id === this.serviceTier),
       supportedServiceTiers,
-      catalogComplete, sandbox: 'workspace-write', approvalPolicy: 'never',
+      catalogComplete, sandbox: 'workspace-write', approvalPolicy: 'never', networkAccess: this.networkAccess,
     };
     return structuredClone(this._checkSummary);
   }
@@ -222,7 +224,7 @@ export class CodexClient {
           threadId: currentThread, input: [{ type: 'text', text }, ...images.map(path => ({ type: 'localImage', path }))],
           model: this.model, effort: this.effort, serviceTier: this.serviceTier,
           cwd: this.cwd, approvalPolicy: 'never',
-          sandboxPolicy: { type: 'workspaceWrite', writableRoots: [this.cwd], networkAccess: false },
+          sandboxPolicy: { type: 'workspaceWrite', writableRoots: [this.cwd], networkAccess: this.networkAccess },
         });
         if (!started.turn?.id) throw bridgeError('CODEX_TURN_MISSING', 'Codex did not return a turn ID.');
         context.turnId = started.turn.id;

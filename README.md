@@ -37,6 +37,8 @@ cp config.example.json config.json
 
 编辑 `config.json`，填写本机可执行文件路径、项目目录、数字员工身份、自己的开放 ID、目标群和当前账号支持的模型配置。模板里的占位符必须替换。
 
+代码统一使用 `main`，模型、路径和网络开关等本机差异保存在已被 Git 忽略的 `config.json` 中，不需要维护单独的运行代码分支。只提交使用占位值的 `config.example.json`；不要提交真实配置。
+
 | 配置项 | 含义 |
 | --- | --- |
 | `dws` / `codex` | DWS 和 Codex 可执行文件的绝对路径；DWS 也可以指向已有的身份隔离包装脚本 |
@@ -47,6 +49,7 @@ cp config.example.json config.json
 | `cwd` | 允许 Codex 处理任务的本机项目绝对路径 |
 | `model` / `effort` | 当前 Codex 模型目录支持的模型和推理档位 |
 | `serviceTier` | 默认 `null`；需启用 Fast 时设为 `priority`，启动前会验证账号是否支持 |
+| `networkAccess` | 可选布尔值，默认 `false`；需要联网的本机任务可在 `config.json` 中明确设为 `true`，不接受字符串或 `null` |
 | `stateDir` | 可选；默认配置文件旁的 `.state`，存放去重、会话和进程状态 |
 | `dwsConfigDir` / `dwsKeychainDir` | 可选；已有的 DWS 配置与加密凭据目录，同时传给 DWS 和 Codex 子进程 |
 
@@ -138,7 +141,7 @@ node monitor.mjs --port 8778  # 单独开启只读日志页
 
 ## 执行边界
 
-- 保留 `workspace-write` 沙箱，模型轮次的网络访问关闭，不支持通过群消息扩大沙箱或替换身份。
+- 保留 `workspace-write` 沙箱；模型轮次按本机配置的 `networkAccess` 控制网络，缺省关闭。该开关不扩大文件可写目录，不支持通过群消息扩大沙箱或替换身份。
 - 身份、会话或消息标识缺失时拒绝执行；不将其他同事的普通对话转交本机 Codex。
 - 卡片投递结果不明时停止后续写入，不自动补发第二张卡片。
 - 图片交付仅由宿主执行，沿用相同身份与已校验目标；投递不明时保留回执，不重发图片。
